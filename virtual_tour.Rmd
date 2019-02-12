@@ -1,0 +1,132 @@
+---
+title: "Adding Virtual Tours to Real Estate listings- Marketing"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r message=FALSE, warning=FALSE}
+library(tidyverse)
+library(data.table)
+library(dplyr)
+library(lubridate)
+library(zoo)
+library(gridExtra)
+```
+
+## Clean & process data
+```{r}
+Data = read.csv("Data.csv")
+
+
+
+# Clean the dataset
+Data$List.Date = as.Date(mdy(Data$List.Date))
+Data$Sold.Date = as.Date(mdy(Data$Sold.Date))
+Data$List.Price <- as.numeric(gsub('[$,]', '', Data$List.Price))
+Data$Sold.Price <- as.numeric(gsub('[$,]', '', Data$Sold.Price))
+Data$Sold.Price.per.SqFt <- as.numeric(gsub('[$,]', '', Data$Sold.Price.per.SqFt))
+Data$TotFlArea = as.numeric(gsub('[,]', '', Data$TotFlArea))
+Data$Status =as.factor(Data$Status)
+Data$TypeDwel<-as.factor(Data$TypeDwel)
+Data$City<-as.factor(Data$City)
+Data$Area<-as.factor(Data$Area)
+Data$StratMtFee<-as.numeric(gsub('[$,]', '', Data$StratMtFee))
+
+# Creating the virtual column
+Data$virtual<-as.numeric(Data$Virtual.Tour.URL!="")
+Data$virtual <- factor(Data$virtual)
+
+Data$sold<-as.numeric(Data$Status=="S")
+Data$sold <- factor(Data$sold)
+
+```
+
+## EDA
+
+```{r message=FALSE, warning=FALSE}
+summary(Data)
+
+# plot
+plot1 <- qplot(Data$PicCount,geom='density',xlab='PicCount')
+plot2 <- qplot(Data$Sold.Price.per.SqFt,geom='density',xlab='Price per SqFt')
+plot3 <- qplot(Data$TypeDwel,geom='bar',xlab='Type of property')
+plot4 <- qplot(Data$Age,geom='histogram',xlab='Age of property',xlim = c(40,120),bins=40)
+
+grid.arrange(plot1,plot2,plot3,plot4,ncol=2)
+
+plot5 <- qplot(Data$DOM,geom='histogram',xlab='The number of days on market')
+
+Data$price.diff <- Data$Sold.Price-Data$List.Price
+plot6 <- qplot(Data$price.diff,geom='histogram',xlab='The difference between list price and sold price')
+grid.arrange(plot5,plot6,ncol=2)
+
+```
+
+## Univariate Analysis
+
+```{r  message=FALSE, warning=FALSE}
+# subset the dataset
+mask <- Data$City %in% c("Vancouver", "Burnaby" , "North Vancouver" )
+Data.VBV <- subset(Data,mask)
+
+# Plot time trend in term of sold date
+Data.VBV$Sold.Date.Year.quarter <- as.yearqtr(Data.VBV$Sold.Date, format = "%Y-%m-%d")
+average <- Data.VBV %>% group_by(TypeDwel,Sold.Date.Year.quarter) %>% summarise(average_virtual = mean(as.numeric(I(virtual==1)),na.rm=TRUE))
+
+ggplot(average, aes(Sold.Date.Year.quarter, average_virtual,group=TypeDwel)) +      
+  geom_point(aes(color=TypeDwel),size=1)+
+  geom_line(aes(color=TypeDwel))+
+  scale_x_yearqtr(format="%YQ%q",n=16)+
+  scale_y_continuous(limits = c(0.2,0.7))+ 
+  xlab("Year-Quarter") + ylab("Virtual tour percentage") + 
+  ggtitle('Vritual Tour')+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 90, vjust=0, hjust=1))
+
+# Plot time trend in term of list date 
+Data.VBV$List.Date.Year.quarter <- as.yearqtr(Data.VBV$List.Date, format = "%Y-%m-%d")
+average2 <- Data.VBV %>% group_by(TypeDwel,List.Date.Year.quarter) %>% summarise(average_virtual = mean(as.numeric(I(virtual==1)),na.rm=TRUE))
+
+ggplot(average2, aes(List.Date.Year.quarter, average_virtual,group=TypeDwel)) +      
+  geom_point(aes(color=TypeDwel),size=1)+
+  geom_line(aes(color=TypeDwel)) +scale_x_yearqtr(format="%YQ%q",n=16)+scale_y_continuous(limits = c(0,0.7))+ 
+  xlab("Year-Quarter") + ylab("Virtual tour percentage (All listings") + 
+  ggtitle('Vritual Tour')+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 90, vjust=0, hjust=1))
+
+```
+
+# Does type of dwelling have an impact?
+
+
+```{r}
+z.TypeDwel <- glm(virtual~TypeDwel,data=Data.VBV, family = "binomial"(link='logit'))
+z.null <- glm(virtual~1,data=Data.VBV, family = "binomial"(link='logit'))
+summary(z.TypeDwel)
+anova(z.null,z.TypeDwel,test='Chisq')
+
+```
+```{r}
+# Probability of using virtual tour
+
+z.prob <- sapply(levels(Data.VBV$TypeDwel),function(x){predict(z.TypeDwel,newdata=data.frame(TypeDwel=x),type='response')})
+
+print(z.prob)
+```
+
+# Effect of Multiple Variates
+
+a. DOM & Price Difference between sold price and listing price 
+b. covariates
+
+```{r}
+z.DOM<-lm(DOM~PicCount+Sold.Price.per.SqFt+Area+TypeDwel+Age + virtual, data=Data.VBV)
+z.difference<-lm(price.diff~PicCount+Sold.Price.per.SqFt+Area+TypeDwel+Age +virtual, data=Data.VBV)
+
+print(summary(z.DOM))
+print(summary(z.difference))
+```
